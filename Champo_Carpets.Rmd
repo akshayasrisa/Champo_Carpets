@@ -1,0 +1,643 @@
+---
+title: "Champo Carpets"
+author: "Vineeth"
+date: "4/22/2022"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#Importing Libraries
+library(readxl)
+library(scales)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(NeuralNetTools)
+library(ipred)
+library(nnet)
+library(DataExplorer)
+library(reshape2)
+library(tracerer)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(Metrics)
+library(knitr)
+library(ROCR)
+library(randomForest)
+library(ROCR)
+library(caret)
+```
+
+```{r}
+#Importing Dataset Champo Carpets - Raw Data Order and Sample & Data on Sample ONLY sheet 
+champo_raw <- read_excel("~/Downloads/R/Champo Carpets.xlsx", sheet = 2)
+champo_sample_only <- read_excel("~/Downloads/R/Champo Carpets.xlsx", sheet = 4)
+```
+We will be using the Raw Data Order and Sample sheet for all Exploratory Data Analysis and Data on Sample ONLY sheet for 
+Model Classification and Evaluation. However, we will pre process and perform Data cleaning on both the sheets. 
+
+```{r}
+#Data Cleaning
+#Removing Unwanted variables in Raw Data Order and Sample sheet 
+champo_raw$CustomerOrderNo <- NULL
+champo_raw$Custorderdate <- NULL
+champo_raw$UnitName <- NULL
+```
+The Customer Order No, Customer Order Date and Unit Name have no inlfuence on determining the Order Conversion rate and hence we have
+disregarded the variables.
+
+```{r}
+#Removing Unwanted variables in Data on sample ONLY
+champo_sample_only$USA <- NULL
+champo_sample_only$UK <- NULL
+champo_sample_only$Italy <- NULL
+champo_sample_only$Belgium <- NULL
+champo_sample_only$Romania <- NULL
+champo_sample_only$Australia <- NULL
+champo_sample_only$India <- NULL
+champo_sample_only$`Hand Tufted`<- NULL
+champo_sample_only$Durry <- NULL
+champo_sample_only$`Double Back`<- NULL
+champo_sample_only$`Hand Woven` <- NULL
+champo_sample_only$Knotted <- NULL
+champo_sample_only$Jacquard <- NULL
+champo_sample_only$Handloom <- NULL
+champo_sample_only$Other <- NULL
+champo_sample_only$REC <- NULL
+champo_sample_only$Round <- NULL
+champo_sample_only$Square <- NULL
+```
+The attributues of the countries we have removed were simply repetitive binary values of the already mentioned CountryName, ITEM_NAME and ShapeName variables and hence we have disregarded the variables.
+
+```{r}
+#Handling ITEM_NAME attribute 
+champo_raw$ITEM_NAME[champo_raw$ITEM_NAME == "INDO-TIBBETAN"] <- "INDO TIBBETAN"
+champo_raw <- champo_raw[champo_raw$ITEM_NAME != "-",]
+
+champo_sample_only$ITEM_NAME[champo_sample_only$ITEM_NAME == "INDO-TIBBETAN"] <- "INDO TIBBETAN"
+```
+The ITEM_NAME attribute in both the sheets (Raw Data Order and Sample & Data on Sample ONLY) had few rows that were hypenated values. Hence, we have handled those rows with actual true values.
+
+```{r}
+#Converting data type to Categorical in Raw Data Order and Sample sheet 
+champo_raw_names <- c('OrderType','OrderCategory','CustomerCode','CountryName','ITEM_NAME','QualityName', 'DesignName','ColorName','ShapeName')
+champo_raw[,champo_raw_names] <- lapply(champo_raw[,champo_raw_names],factor)
+
+#Converting data type to Categorical in Data on Sample ONLY sheet 
+champo_sample_only_names <- c('CustomerCode','CountryName','ITEM_NAME','ShapeName','Order Conversion')
+champo_sample_only[,champo_sample_only_names] <- lapply(champo_sample_only[,champo_sample_only_names],factor)
+```
+
+```{r}
+#Renaming the Target Variable in Data on Sample ONLY 
+#colnames(champo_sample_only) <- c("Order Conversion", "Order_Conversion")
+colnames(champo_sample_only)[7] <- "Order_Conversion"
+```
+
+```{r}
+#Missing Value Analysis - Raw Data Order and Sample
+colSums(is.na(champo_raw))
+```
+
+```{r}
+#Missing Value Analysis - Data on Sample ONLY 
+colSums(is.na(champo_sample_only))
+```
+
+```{r}
+#Displaying Structure of Dataset
+print(paste("Structure of Raw Data Order and Sample"))
+str(champo_raw)
+print(paste("Structure of Data on Sample ONLY"))
+str(champo_sample_only)
+```
+
+```{r}
+#Summary Statistics of Dataset variables - raw data
+print(paste("Summary Statustics of Raw Data Order and Sample"))
+summary(champo_raw)
+print(paste("Summary Statistics of Data on Sample ONLY"))
+summary(champo_sample_only)
+```
+
+```{r}
+#Data Quality Check
+print(paste("Raw Data Order and Sample"))
+data_qual <- t(introduce(champo_raw))
+colnames(data_qual)<- "Values"
+data_qual
+plot_intro(champo_raw)
+
+print(paste("Data on Sample ONLY"))
+data_qual <- t(introduce(champo_sample_only))
+colnames(data_qual)<- "Values"
+data_qual
+plot_intro(champo_sample_only)
+```
+```{r}
+#Exploratory Data Analysis 
+#Computing Proportion of Order Conversion Date
+Response <- champo_sample_only %>% 
+  count(Order_Conversion) %>% 
+  mutate(perc = n / nrow(champo_sample_only)) 
+
+Response %>%
+ ggplot(aes(x=Order_Conversion,y= perc,fill=as.factor(Order_Conversion))) +
+ geom_bar(stat="identity") +
+ labs(title="Percentage of Order Conversion Rate") +
+  xlab("Order Conversion") +
+  ylab("Percentage") +
+  geom_text(aes(label=scales::percent(perc)), position = position_stack(vjust = 1.01))+
+  scale_y_continuous(labels = scales::percent)+
+  scale_fill_manual(values = c("1" = "green", "0" = "red")) +
+  scale_fill_discrete(name="Order Conversion",labels = c("0" = "0 - Not Converted", "1" = "1 - Converted"))
+
+```
+We visualize the outcome of Order Conversion Rate to be biased towards higher proportion of No Conversion Rate. About 80% of the 5820 customers do not revert back as potential customers for Champo Carpets and only 20% of the customer base show potential good conversion rate.Therefore, we can say that the data are unbalanced.
+
+```{r}
+champo_raw_order <- champo_raw %>% 
+  filter(OrderCategory =="Order") 
+
+champo_raw_order %>% 
+  ggplot( aes(x=ITEM_NAME, y=Amount, fill= CountryName)) +
+  geom_col() + 
+  coord_polar(start=0) +
+  theme(axis.text.x=element_text (size= 5.5, hjust =1)) + 
+  scale_y_continuous(labels=comma)
+
+```
+```{r}
+champo_raw_order %>% 
+  ggplot( aes(x= reorder(ITEM_NAME, QtyRequired),y=QtyRequired, fill= ITEM_NAME)) +
+  geom_bar(stat ="identity") + 
+  theme(axis.text.x=element_text (angle =45, hjust =1)) + 
+  scale_y_continuous(labels=comma)
+```
+
+```{r}
+champo_raw_order %>% 
+  group_by(CountryName) %>% 
+  ggplot(aes(x= CountryName , y = Amount, fill= CountryName)) + 
+  geom_col() +
+  theme(axis.text.x=element_text (angle =45, hjust =1)) + 
+  scale_y_continuous(labels=comma)
+```
+
+
+```{r}
+champo_raw_order %>% 
+  group_by(CountryName) %>% 
+  ggplot(aes(x= CustomerCode , y= Amount, fill= CustomerCode)) + 
+  geom_point(aes(col=CustomerCode)) + 
+  geom_smooth(method="loess", se=T) + 
+  theme(axis.text.x=element_text (angle =45, hjust =1)) + 
+  scale_y_continuous(labels=comma)
+```
+
+
+```{r}
+#Analysis of Continuous Variables in Raw Data Order and Sample sheet
+boxplot(champo_sample_only$QtyRequired, col = "maroon", xlab="Quantity Required")
+boxplot(champo_sample_only$AreaFt, col = "maroon", xlab="Area Ft")
+```
+
+```{r}
+#Correlation of Continuous Variables
+library(GGally)
+corr <- champo_sample_only %>%
+  select(QtyRequired,AreaFt,Order_Conversion) 
+ggpairs(corr)
+```
+
+```{r}
+#Analysis of Categorical Variables in Dataset  in Raw Data Order and Sample sheet
+chisq.test(champo_sample_only$CustomerCode, champo_sample_only$`Order_Conversion`, correct=FALSE)
+chisq.test(champo_sample_only$CountryName, champo_sample_only$`Order_Conversion`, correct=FALSE)
+chisq.test(champo_sample_only$ITEM_NAME, champo_sample_only$`Order_Conversion`, correct=FALSE)
+chisq.test(champo_sample_only$ShapeName, champo_sample_only$`Order_Conversion`, correct=FALSE)
+
+```
+
+
+```{r}
+#Decision Tree Model using Gini with Pruning - Unbalanced
+data_70_30_split <- champo_sample_only
+set.seed(1346)
+
+indx <- sample(2, nrow(data_70_30_split), replace= TRUE, prob = c(0.7, 0.3))
+
+train <- data_70_30_split[indx == 1, ]
+test <- data_70_30_split[indx == 2, ]
+trainX <- train[-7]
+testX <- test[-7]
+
+#tree_model <- rpart(response ~ ., train)
+tree_model <- rpart(Order_Conversion ~ ., train, method = "class", control = rpart.control(minsplit=20, minbucket=10, cp=0.001))
+rpart.plot(tree_model)
+
+#Depth of tree
+nleaves <- length(unique(tree_model$where))
+print(nleaves)
+
+#Important variables in final tree model
+print(tree_model$variable.importance)
+
+#TRAIN DATA 
+#Determining Accuracy
+train_preds <- predict(tree_model, trainX, type = "class")
+train_confusionmatrix <- table(train_preds, train$Order_Conversion)
+train_accuracy <- sum(diag(train_confusionmatrix))/sum(train_confusionmatrix)
+print(train_confusionmatrix)
+print(paste("Training accuracy is ", round(train_accuracy,3), sep = ""))
+#Determining Recall
+train_recall <- train_confusionmatrix[2,2]/(train_confusionmatrix[2,1] + train_confusionmatrix[2,2])
+print(paste("Training recall is ", round(train_recall,3), sep = ""))
+#Determining Precision
+train_precision <- train_confusionmatrix[2,2]/(train_confusionmatrix[1,2] + train_confusionmatrix[2,2])
+print(paste("Training precision is ", round(train_precision,3), sep = ""))
+
+#TEST DATA
+#Determining Accuracy
+test_preds <- predict(tree_model, testX, type = "class")
+test_confusionmatrix <- table(test_preds, test$Order_Conversion)
+test_accuracy <- sum(diag(test_confusionmatrix))/sum(test_confusionmatrix)
+print(test_confusionmatrix)
+print(paste("Test accuracy is ", round(test_accuracy,3), sep = ""))
+#Determining Recall
+test_recall <- test_confusionmatrix[2,2]/(test_confusionmatrix[2,1] + test_confusionmatrix[2,2])
+print(paste("Test recall is ", round(test_recall,3), sep = ""))
+#Determining Precision
+test_precision <- test_confusionmatrix[2,2]/(test_confusionmatrix[1,2] + test_confusionmatrix[2,2])
+print(paste("Test precision is ", round(test_precision,3), sep = ""))
+
+#ERROR
+#Determining Error of Train set
+tree_pred_class <- predict(tree_model, train, type = "class")
+trainerror <- mean(tree_pred_class != train$Order_Conversion)
+print(paste("Training Error is ", round(trainerror,3), sep = ""))
+#Determining Error of Test set
+tree_pred_test <- predict(tree_model, test, type = "class")
+testerror <- mean(tree_pred_test != test$Order_Conversion)
+print(paste("Test Error is ", round(testerror,3), sep = ""))
+
+#Explanation for choosing minsplit, min bucket and cp value 
+#Insert Image
+#Add image of table to show all split values 
+plotcp(tree_model)
+printcp(tree_model)
+
+#Evaluation Charts
+pred_test <- predict(tree_model, newdata = test, type = "prob")
+pred <- prediction(pred_test[, 2], test$Order_Conversion)
+#Gain Chart
+perf <- performance(pred, "tpr", "rpp")
+plot(perf)
+#ROC Curve
+perf <- performance(pred, "tpr", "fpr")
+plot(perf)
+# Response Chart
+perf <- performance(pred, "ppv", "rpp")
+plot(perf)
+# Lift Chart 
+perf <- performance(pred, "lift", "rpp")
+plot(perf)
+#Area Under Curve
+auc <- unlist(slot(performance(pred, "auc"), "y.values"))
+print(paste("The Area Under the Curve is ", auc))
+
+#CROSS VALIDATION
+dt_cross <- data_70_30_split[sample(nrow(data_70_30_split)),]
+k <- 5
+nmethod <- 1
+folds <- cut(seq(1,nrow(dt_cross)), breaks = k, labels = FALSE)
+model.err <- matrix(-1, k, nmethod, dimnames = list(paste0("Fold", 1:k), c("Decision Tree Model")))
+
+for (i in 1:k)
+{
+  testindexes <- which(folds == i, arr.ind = TRUE)
+  test <- dt_cross[testindexes,]
+  train <- dt_cross[-testindexes,]
+  
+tree_model <- rpart(Order_Conversion ~ ., train, method = "class", control = rpart.control(minsplit=20, minbucket=10, cp= 0.001))
+  predict_treemodel <- predict(tree_model, test, type = "class")
+  model.err[i] <- mean(test$Order_Conversion!= predict_treemodel)
+}
+print(paste("The CV Error rate of Decision Tree after Cross Validation is ",round(mean(model.err),3), sep = ""))
+
+
+```
+```{r}
+#Random Forest 
+set.seed(1346)
+rf_data <- champo_sample_only
+rf <- randomForest(Order_Conversion ~ ., data= rf_data, ntree = 300, mtry = sqrt(ncol(rf_data)-1), proximity = T, importance = T)
+print(rf)
+
+#Determining best value of mtry using validation set
+indx <- sample(2, nrow(rf_data), replace = T, prob= c(0.7,0.3))
+Train <- rf_data[indx == 1,]
+Validation <- rf_data[indx == 2,]
+pr.err <- c()
+for(mt in seq(1, ncol(Train)))
+{
+  rf_mtry <- randomForest(Order_Conversion ~., data = Train, ntree = 300, mtry = ifelse(mt == ncol(Train), mt -1, mt))
+  pred <- predict(rf_mtry, newdata = Validation, type = "class")
+  pr.err<- c(pr.err, mean(pred != Validation$Order_Conversion))
+}
+pr.err
+bestmtry <- which.min(pr.err)
+print(paste("The Best mtry is ", bestmtry))
+
+#Determining best ntree
+oob_err <- data.frame(trees = rep(1:nrow(rf$err.rate), times = 3), Type = rep(c("OOB", "0", "1"), each = row(rf$err.rate)),
+                                  error = c(rf$err.rate[,"OOB"], rf$err.rate[,"0"], rf$err.rate[,"1"]))
+ggplot(data = oob_err, aes(x = trees, y = error)) + geom_col(aes(color=Type)) + xlab("Number of Trees") + ylab("OOB Error rate")
+oob_err
+
+#Random Forest with best mtry and ntree
+ntree = 100
+rf_best <- randomForest(Order_Conversion ~ ., data= rf_data, ntree = ntree, mtry = bestmtry, proximity = T, importance = T)
+print(rf_best)
+plot(rf_best)
+attributes(rf_best)
+
+#Confusion Matrix
+CM <- table(rf_best$predicted, rf_data$Order_Conversion, dnn = c("Predicted", "Actual"))
+error_metric = function(CM){
+  TN = CM[1,1]
+  TP = CM[2,2]
+  FN = CM[1,2]
+  FP = CM[2,1]
+  accuracy = (TP+TN)/(TP+TN+FP+FN)
+  recall = (TP)/(TP+FN)
+  precision = (TP)/(TP+FP)
+  falsePositiveRate = (FP)/(FP+TN)
+  falseNegativeRate = (FN)/(FN+TP)
+  error = (FP+FN)/(TP+TN+FP+FN)
+  modelPerf <- list("accuracy" = accuracy,
+                    "precision" = precision,
+                    "recall" = recall,
+                    "falsepositiverate" = falsePositiveRate,
+                    "falsenegativerate" = falseNegativeRate,
+                    "error" = error
+                    )
+  return(modelPerf)
+}
+
+outPutlist <- error_metric(CM)
+
+library(plyr)
+df <- ldply(outPutlist, data.frame)
+setNames(df,c("","Values"))
+
+#Evaluation Charts
+score <- rf_best$votes[,2]
+pred <- prediction(score, rf_data$Order_Conversion)
+#Gain Chart
+perf <- performance(pred, "tpr", "rpp")
+plot(perf)
+#ROC Curve
+perf <- performance(pred, "tpr", "fpr")
+plot(perf)
+# Response Chart
+perf <- performance(pred, "ppv", "rpp")
+plot(perf)
+# Lift Chart 
+perf <- performance(pred, "lift", "rpp")
+plot(perf)
+#Area Under Curve
+auc <- unlist(slot(performance(pred, "auc"), "y.values"))
+print(paste("The Area Under the Curve is ", auc))
+
+#CROSS Validation 
+rf_data <- rf_data[sample(nrow(rf_data)),]
+k <- 10
+nmethod <- 1
+folds <- cut(seq(1,nrow(rf_data)), breaks = k, labels = FALSE)
+model.err <- matrix(-1, k, nmethod, dimnames = list(paste0("Fold", 1:k), c("Random Forest Model")))
+
+for (i in 1:k)
+{
+  testindexes <- which(folds == i, arr.ind = TRUE)
+  test <- rf_data[testindexes,]
+  train <- rf_data[-testindexes,]
+  
+rf_cross <- randomForest(Order_Conversion ~ ., data= rf_data, ntree = 100, mtry = bestmtry, proximity = T, importance = T)
+  predict_treemodel <- predict(rf_cross, test, type = "class")
+  model.err[i] <- mean(test$Order_Conversion!= predict_treemodel)
+}
+print(paste("The CV Error rate of Random Forest after Cross Validation is",mean(model.err)))
+```
+
+
+
+```{r}
+#Logistic Regression
+logit_data <- champo_sample_only
+
+set.seed(1766)
+indx <- sample(2, nrow(logit_data), replace = T, prob= c(0.7,0.3))
+train <- logit_data[indx == 1,]
+test <- logit_data[indx == 2,]
+
+logitModel <- glm(Order_Conversion ~ ., data = train, family = "binomial")
+summary(logitModel)
+
+pred <- predict(logitModel, newdata = test, type = "response")
+class <- as.factor(ifelse(pred >= 0.5, 1, 0))
+#Confusion Matrix
+CM <- table(class, test$Order_Conversion, dnn = c("Predicted", "Actual"))
+
+error_metric = function(CM){
+  TN = CM[1,1]
+  TP = CM[2,2]
+  FN = CM[1,2]
+  FP = CM[2,1]
+  accuracy = (TP+TN)/(TP+TN+FP+FN)
+  recall = (TP)/(TP+FN)
+  precision = (TP)/(TP+FP)
+  falsePositiveRate = (FP)/(FP+TN)
+  falseNegativeRate = (FN)/(FN+TP)
+  error = (FP+FN)/(TP+TN+FP+FN)
+  modelPerf <- list("accuracy" = accuracy,
+                    "precision" = precision,
+                    "recall" = recall,
+                    "falsepositiverate" = falsePositiveRate,
+                    "falsenegativerate" = falseNegativeRate,
+                    "error" = error
+                    )
+  return(modelPerf)
+}
+
+outPutlist <- error_metric(CM)
+
+library(plyr)
+df <- ldply(outPutlist, data.frame)
+setNames(df,c("","Values"))
+
+#Evaluation Charts
+pred_test <- predict(logitModel, newdata = test, type = "response")
+pred_threshold <- ifelse(pred_test > 0.5,1,0)
+pred <- prediction(pred_threshold, test$Order_Conversion)
+#Gain Chart
+perf <- performance(pred, "tpr", "rpp")
+plot(perf)
+#ROC Curve
+perf <- performance(pred, "tpr", "fpr")
+plot(perf)
+# Response Chart
+perf <- performance(pred, "ppv", "rpp")
+plot(perf)
+# Lift Chart 
+perf <- performance(pred, "lift", "rpp")
+plot(perf)
+#Area Under Curve
+auc <- unlist(slot(performance(pred, "auc"), "y.values"))
+print(paste("The Area Under the Curve is ", auc))
+
+
+#CROSS VALIDATION
+set.seed(1234)
+logit_data <- logit_data[sample(nrow(logit_data)),]
+k <- 10
+nmethod <- 1
+folds <- cut(seq(1,nrow(logit_data)), breaks = k, labels = FALSE)
+model.err <- matrix(-1, k, nmethod, dimnames = list(paste0("Fold", 1:k), c("Logistic Regression Model")))
+for (i in 1:k)
+{
+  testindexes <- which(folds == i, arr.ind = TRUE)
+  test <- logit_data[testindexes,]
+  train <- logit_data[-testindexes,]
+  
+logitModel_cross <- glm(Order_Conversion ~ ., data = train, family = "binomial")
+pred <- predict(logitModel_cross, newdata = test, type = "response")
+pred_class <- as.factor(ifelse(pred >= 0.5,1,0))
+model.err[i] <- mean(test$Order_Conversion != pred_class)
+
+}
+print(paste("The CV Error rate of Logistic Regression after Cross Validation is",mean(model.err)))
+
+```
+
+```{r}
+#AdaBoost
+```
+
+
+```{r}
+#Neural Network
+#Normalizing all numerical variables 
+myscale <- function(x)
+{
+  (x - min(x))/(max(x) - min(x))
+}
+nn_data <- champo_sample_only %>%
+  mutate_if(is.numeric, myscale)
+
+
+#Determining Best Decay Parameter
+set.seed(1346)
+indx <- sample(2, nrow(nn_data), replace = T, prob = c(0.7,0.3))
+train2 <- nn_data[indx == 1,]
+validation <- nn_data[indx == 2,]
+
+err <- vector("numeric", 100)
+d <- seq(0.0001,1,length.out = 100)
+k = 1
+for (i in d)
+{
+  mymodel <- nnet(Order_Conversion ~ ., data = train2, decay = i, size = 10, maxit = 3000)
+  pred.class <- predict(mymodel, newdata = validation, type = "class")
+  err[k] <- mean(pred.class != validation$Order_Conversion)
+  k <- k+1
+  
+}
+
+plot(d,err)
+set.seed(1346)
+indx <- sample(2, nrow(nn_data), replace = T, prob= c(0.7,0.3))
+train <- nn_data[indx == 1,]
+test <- nn_data[indx == 2,]
+
+nnModel <- nnet(Order_Conversion ~ ., data = train, linout = F, size = 10, decay = 0.4, maxit = 3000)
+plotnet(nnModel)
+
+nn.preds <- predict(nnModel, test)
+nn.preds <- as.factor(ifelse(nn.preds > 0.5, "1", "0"))
+
+#Confusion Matrix
+CM <- table(nn.preds, test$Order_Conversion, dnn = c("Predicted", "Actual"))
+
+error_metric = function(CM){
+  TN = CM[1,1]
+  TP = CM[2,2]
+  FN = CM[1,2]
+  FP = CM[2,1]
+  accuracy = (TP+TN)/(TP+TN+FP+FN)
+  recall = (TP)/(TP+FN)
+  precision = (TP)/(TP+FP)
+  falsePositiveRate = (FP)/(FP+TN)
+  falseNegativeRate = (FN)/(FN+TP)
+  error = (FP+FN)/(TP+TN+FP+FN)
+  modelPerf <- list("Accuracy" = accuracy,
+                    "Precision" = precision,
+                    "Recall" = recall,
+                    "Falsepositiverate" = falsePositiveRate,
+                    "Falsenegativerate" = falseNegativeRate,
+                    "Error" = error
+                    )
+  return(modelPerf)
+}
+
+outPutlist <- error_metric(CM)
+
+library(plyr)
+df <- ldply(outPutlist, data.frame)
+setNames(df, c("", "Values"))
+
+#Evaluation Charts
+pred_test <- predict(nnModel, newdata = test, type = "prob")
+pred <- prediction(pred_test[, 2], test$Order_Conversion)
+#Gain Chart
+perf <- performance(pred, "tpr", "rpp")
+plot(perf)
+#ROC Curve
+perf <- performance(pred, "tpr", "fpr")
+plot(perf)
+# Response Chart
+perf <- performance(pred, "ppv", "rpp")
+plot(perf)
+# Lift Chart 
+perf <- performance(pred, "lift", "rpp")
+plot(perf)
+#Area Under Curve
+auc <- unlist(slot(performance(pred, "auc"), "y.values"))
+print(paste("The Area Under the Curve is ", auc))
+
+
+
+```
+
+```{r}
+#Kmeans
+
+
+
+
+
+
+```
+
+
+
+
+
+
